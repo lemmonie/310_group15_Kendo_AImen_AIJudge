@@ -1,6 +1,8 @@
 import os
 import random
 from collections import Counter
+import numpy as np
+from tqdm import tqdm
 
 import torch
 import torch.nn as nn
@@ -8,213 +10,176 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
 from torchvision.models import convnext_tiny, ConvNeXt_Tiny_Weights
-from sklearn.metrics import confusion_matrix, classification_report
-from sklearn.model_selection import StratifiedShuffleSplit
-import numpy as np
 
-SEED = 15
+from sklearn.model_selection import StratifiedShuffleSplit
+from sklearn.metrics import confusion_matrix, classification_report
+from sklearn.utils.class_weight import compute_class_weight
+
+# random seed
+SEED = 42
 random.seed(SEED)
 np.random.seed(SEED)
 torch.manual_seed(SEED)
-torch.cuda.manual_seed(SEED)
 torch.cuda.manual_seed_all(SEED)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
-DATASET_ROOT = "dataset_more_none"
+# setting
+DATASET_ROOT = "dataset_aug"   # from offline aug
 IMG_SIZE = 224
 BATCH_SIZE = 16
-EPOCHS = 20
+EPOCHS = 10
 LR = 1e-4
-MODEL_SAVE_PATH = "kendo_classifier_convnext.pth"
+MODEL_SAVE_PATH = "kendo_convnext.pth"
 
-#Data Augmentation (keep left/right orientation!)
-# train_transform = transforms.Compose([
-#     transforms.Resize((IMG_SIZE, IMG_SIZE)),
-#     transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
-#     transforms.RandomResizedCrop(IMG_SIZE, scale=(0.9, 1.0)),
-#     transforms.ToTensor(),
-#     transforms.Normalize(mean=[0.485, 0.456, 0.406],
-#                          std=[0.229, 0.224, 0.225])
-# ])
-# val_test_transform = transforms.Compose([
-#     transforms.Resize((IMG_SIZE, IMG_SIZE)),
-#     transforms.ToTensor(),
-#     transforms.Normalize(mean=[0.485, 0.456, 0.406],
-#                          std=[0.229, 0.224, 0.225])
-# ])
-
+# Data Augmentation
 train_transform = transforms.Compose([
     transforms.Resize((IMG_SIZE, IMG_SIZE)),
-
-    transforms.RandomApply([
-        transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 1.0))
-    ], p=0.3),
-
-    transforms.RandomApply([
-        transforms.ColorJitter(
-            brightness=0.15,
-            contrast=0.15,
-            saturation=0.15,
-            hue=0.02
-        )
-    ], p=0.5),
-
-    transforms.RandomApply([
-        transforms.Lambda(lambda img: img.convert("RGB")),  # 保證是RGB
-        transforms.Lambda(lambda img: transforms.functional.adjust_jpeg_quality(img, quality=80))
-    ], p=0.3),
-
-    transforms.RandomApply([
-        transforms.RandomResizedCrop(IMG_SIZE, scale=(0.9, 1.0))
-    ], p=0.4),
-
+    transforms.RandomResizedCrop(IMG_SIZE, scale=(0.85, 1.0)),
+    transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.02),
+    # transforms.RandomApply([transforms.GaussianBlur(3)], p=0.3),
     transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                         std=[0.229, 0.224, 0.225])
+    transforms.Normalize(mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225])
 ])
 
 val_test_transform = transforms.Compose([
     transforms.Resize((IMG_SIZE, IMG_SIZE)),
     transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                         std=[0.229, 0.224, 0.225])
+    transforms.Normalize(mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225])
 ])
 
-# Load dataset (initially no augmentation)
+# load dataset
 full_dataset = datasets.ImageFolder(DATASET_ROOT, transform=val_test_transform)
 class_names = full_dataset.classes
 num_classes = len(class_names)
+print("Classes:", class_names)
 
-# Extract labels for stratified splitting
-all_labels = [full_dataset.samples[i][1] for i in range(len(full_dataset))]
+# Stratified Split
+labels = [full_dataset.samples[i][1] for i in range(len(full_dataset))]
+sss_temp = StratifiedShuffleSplit(n_splits=1, test_size=0.2, random_state=SEED)
+train_idx, temp_idx = next(sss_temp.split(np.zeros(len(labels)), labels))
 
-# Stratified split: 80% train, 10% val, 10% test
-sss_temp = StratifiedShuffleSplit(n_splits=1, test_size=0.2, random_state=42)  # 80/20
-train_idx, temp_idx = next(sss_temp.split(np.zeros(len(all_labels)), all_labels))
-
-temp_labels = [all_labels[i] for i in temp_idx]
-sss_val_test = StratifiedShuffleSplit(n_splits=1, test_size=0.5, random_state=42)  # split 10%/10%
+temp_labels = [labels[i] for i in temp_idx]
+sss_val_test = StratifiedShuffleSplit(n_splits=1, test_size=0.5, random_state=SEED)
 val_idx, test_idx = next(sss_val_test.split(np.zeros(len(temp_labels)), temp_labels))
-
-# map val/test back to original index
 val_idx = [temp_idx[i] for i in val_idx]
 test_idx = [temp_idx[i] for i in test_idx]
 
-print(f"Stratified split done:")
-print(f"Train={len(train_idx)}, Val={len(val_idx)}, Test={len(test_idx)}")
+def label_dist(indices):
+    c = Counter([labels[i] for i in indices])
+    return {class_names[k]: c.get(k, 0) for k in range(len(class_names))}
 
-# Subsets
+print("Train Dist:", label_dist(train_idx))
+print("Val Dist:", label_dist(val_idx))
+print("Test Dist:", label_dist(test_idx))
+
+# class weight
+train_labels = [labels[i] for i in train_idx]
+class_weights = compute_class_weight(
+    class_weight='balanced',
+    classes=np.arange(len(class_names)),
+    y=train_labels
+)
+class_weights = torch.tensor(class_weights, dtype=torch.float)
+print("Class Weights:", dict(zip(class_names, class_weights.numpy())))
+
+# Dataset & DataLoader
 train_dataset = Subset(full_dataset, train_idx)
 val_dataset = Subset(full_dataset, val_idx)
 test_dataset = Subset(full_dataset, test_idx)
-
-def count_labels(indices, labels):
-    subset_labels = [labels[i] for i in indices]
-    counter = Counter(subset_labels)
-    return {class_names[k]: counter.get(k, 0) for k in range(len(class_names))}
-
-train_dist = count_labels(train_idx, all_labels)
-val_dist = count_labels(val_idx, all_labels)
-test_dist = count_labels(test_idx, all_labels)
-
-print("\nClass distribution:")
-print("Train:", train_dist)
-print("Val:  ", val_dist)
-print("Test: ", test_dist)
-
-# Augmentation
 train_dataset.dataset.transform = train_transform
 val_dataset.dataset.transform = val_test_transform
 test_dataset.dataset.transform = val_test_transform
 
-# DataLoader
 train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
 val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False)
 test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False)
 
-print(f"Category: {class_names}")
-
-# === Build ConvNeXt Tiny ===
+# ConvNeXt Tiny + ImageNet
 weights = ConvNeXt_Tiny_Weights.IMAGENET1K_V1
 model = convnext_tiny(weights=weights)
 model.classifier[2] = nn.Linear(model.classifier[2].in_features, num_classes)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(device)
 model = model.to(device)
+class_weights = class_weights.to(device)
 
-# fine-tune last ~100 params
+#fine-tune
 for name, param in model.named_parameters():
     param.requires_grad = False
 for name, param in list(model.named_parameters())[-100:]:
     param.requires_grad = True
 
-criterion = nn.CrossEntropyLoss()
+# Use class weight to balance loss
+criterion = nn.CrossEntropyLoss(weight=class_weights)
 optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=LR)
 
-def train_one_epoch(epoch):
-    model.train()
+# train and val
+def run_epoch(loader, training=True):
+    if training:
+        model.train()
+    else:
+        model.eval()
     total_loss, total_correct = 0, 0
-    for imgs, labels in train_loader:
-        imgs, labels = imgs.to(device), labels.to(device)
-        optimizer.zero_grad()
-        outputs = model(imgs)
-        loss = criterion(outputs, labels)
-        loss.backward()
-        optimizer.step()
 
-        total_loss += loss.item() * imgs.size(0)
-        total_correct += (outputs.argmax(1) == labels).sum().item()
-
-    avg_loss = total_loss / len(train_loader.dataset)
-    acc = total_correct / len(train_loader.dataset)
-    print(f"Epoch {epoch+1}/{EPOCHS} | Train Loss: {avg_loss:.4f} Acc: {acc:.4f}")
-
-def validate(epoch):
-    model.eval()
-    total_loss, total_correct = 0, 0
-    with torch.no_grad():
-        for imgs, labels in val_loader:
+    with torch.set_grad_enabled(training):
+        for imgs, labels in loader:
             imgs, labels = imgs.to(device), labels.to(device)
             outputs = model(imgs)
             loss = criterion(outputs, labels)
+
+            if training:
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
             total_loss += loss.item() * imgs.size(0)
             total_correct += (outputs.argmax(1) == labels).sum().item()
 
-    avg_loss = total_loss / len(val_loader.dataset)
-    acc = total_correct / len(val_loader.dataset)
-    print(f"Epoch {epoch+1}/{EPOCHS} | Val Loss: {avg_loss:.4f} Acc: {acc:.4f}")
+    avg_loss = total_loss / len(loader.dataset)
+    avg_acc = total_correct / len(loader.dataset)
+    return avg_loss, avg_acc
 
-def test_model():
-    model.eval()
-    y_true, y_pred = [], []
-    with torch.no_grad():
-        for imgs, labels in test_loader:
-            imgs = imgs.to(device)
-            outputs = model(imgs)
-            preds = outputs.argmax(1).cpu().numpy()
-            y_pred.extend(preds)
-            y_true.extend(labels.numpy())
-
-    acc = np.mean(np.array(y_true) == np.array(y_pred))
-    print(f"\nAccuracy: {acc:.4f}")
-
-    cm = confusion_matrix(y_true, y_pred)
-    print("\nConfusion Matrix:")
-    print(class_names)
-    print(cm)
-    print("\nClassification Report:")
-    print(classification_report(y_true, y_pred, target_names=class_names))
-
-# === Training loop ===
+# loop
+best_val_acc = 0
 for epoch in range(EPOCHS):
-    train_one_epoch(epoch)
-    validate(epoch)
+    train_loss, train_acc = run_epoch(train_loader, training=True)
+    val_loss, val_acc = run_epoch(val_loader, training=False)
 
-test_model()
+    print(f"[Epoch {epoch+1}/{EPOCHS}] "
+          f"Train Loss={train_loss:.4f} Acc={train_acc:.4f} | "
+          f"Val Loss={val_loss:.4f} Acc={val_acc:.4f}")
 
-torch.save({
-    "model_state_dict": model.state_dict(),
-    "class_to_idx": full_dataset.class_to_idx
-}, MODEL_SAVE_PATH)
-print(f"\nModel saved at {MODEL_SAVE_PATH}")
+    #save best
+    if val_acc > best_val_acc:
+        best_val_acc = val_acc
+        torch.save({
+            "model_state_dict": model.state_dict(),
+            "class_to_idx": full_dataset.class_to_idx
+        }, MODEL_SAVE_PATH)
+        print(f"Best model saved (Val Acc={val_acc:.4f})")
+
+# test
+print("\nTest:")
+checkpoint = torch.load(MODEL_SAVE_PATH, map_location="cpu")
+model.load_state_dict(checkpoint["model_state_dict"])
+model.eval()
+
+y_true, y_pred = [], []
+with torch.no_grad():
+    for imgs, labels in test_loader:
+        imgs = imgs.to(device)
+        outputs = model(imgs)
+        preds = outputs.argmax(1).cpu().numpy()
+        y_pred.extend(preds)
+        y_true.extend(labels.numpy())
+
+acc = np.mean(np.array(y_true) == np.array(y_pred))
+print(f"Test Accuracy: {acc:.4f}")
+print("Confusion Matrix:")
+print(confusion_matrix(y_true, y_pred))
+print("\nClassification Report:")
+print(classification_report(y_true, y_pred, target_names=class_names))
+
+print("Best model is saved at:", MODEL_SAVE_PATH)

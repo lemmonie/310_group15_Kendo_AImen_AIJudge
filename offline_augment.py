@@ -7,11 +7,36 @@ import cv2
 import shutil
 
 # add the root
-SRC_ROOT = ""
-DST_ROOT = ""
-AUG_PER_IMAGE = 5
+SRC_ROOT = "dataset_more_none"
+DST_ROOT = "dataset_aug"
+AUG_PER_IMAGE = 2
+
+def random_perspective(img, max_shift=0.05):
+    arr = np.array(img)
+    h, w = arr.shape[:2]
+
+    # the original 4 angels
+    src_pts = np.float32([[0, 0], [w, 0], [w, h], [0, h]])
+
+    # shifting the 4 angles (modelling different camera angels)]
+    shift_x = w * random.uniform(-max_shift, max_shift)
+    shift_y = h * random.uniform(-max_shift, max_shift)
+    dst_pts = np.float32([
+        [0 + shift_x, 0 + shift_y],
+        [w - shift_x, 0 + shift_y],
+        [w - shift_x, h - shift_y],
+        [0 + shift_x, h - shift_y]
+    ])
+
+    M = cv2.getPerspectiveTransform(src_pts, dst_pts)
+    arr_warped = cv2.warpPerspective(arr, M, (w, h), borderMode=cv2.BORDER_REPLICATE)
+    return Image.fromarray(arr_warped)
 
 def augment_image(img: Image.Image):
+    # changing the angel of the aug to 3-7 degree (modeling shooting from the sides)
+    if random.random() < 0.5:
+        img = random_perspective(img, max_shift=0.05)
+
     # blurring or sharpening the photo
     if random.random() < 0.4:
         if random.random() < 0.5:
@@ -23,7 +48,7 @@ def augment_image(img: Image.Image):
     if random.random() < 0.7:
         img = ImageEnhance.Brightness(img).enhance(random.uniform(0.85, 1.15))
         img = ImageEnhance.Contrast(img).enhance(random.uniform(0.85, 1.2))
-        img = ImageEnhance.Color(img).enhance(random.uniform(0.85, 1.2))
+        img = ImageEnhance.Color(img).enhance(random.uniform(0.7, 1.3))
 
     # Gamma shift
     if random.random() < 0.4:

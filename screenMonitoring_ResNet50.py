@@ -14,7 +14,7 @@ from collections import Counter
 USE_VOTING_MODE = True   # True = voting mode, False = instant mode
 SCREENSHOT_FPS = 30
 
-# === Model Settings ===
+# === Model Settings for different type ===
 MODEL_PATH = "kendo_resnet50.pth"
 IMG_SIZE = 224
 DISPLAY_WIDTH = 960

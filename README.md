@@ -49,6 +49,7 @@ Confusion matrix:
 ```
 
 Classification Report:
+```
               precision    recall  f1-score   support
 
         left       1.00      1.00      1.00         3
@@ -58,6 +59,7 @@ Classification Report:
     accuracy                           1.00        12
    macro avg       1.00      1.00      1.00        12
 weighted avg       1.00      1.00      1.00        12
+```
 
 ---
 

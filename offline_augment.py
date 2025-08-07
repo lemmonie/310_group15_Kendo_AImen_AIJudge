@@ -11,6 +11,7 @@ SRC_ROOT = "dataset_more_none"
 DST_ROOT = "dataset_aug"
 AUG_PER_IMAGE = 2
 
+# might not be used
 def random_perspective(img, max_shift=0.05):
     arr = np.array(img)
     h, w = arr.shape[:2]
@@ -32,10 +33,37 @@ def random_perspective(img, max_shift=0.05):
     arr_warped = cv2.warpPerspective(arr, M, (w, h), borderMode=cv2.BORDER_REPLICATE)
     return Image.fromarray(arr_warped)
 
+# afine/perspective transformation
+def apply_perspective_wrap(img:Image.Image,max_warp=0.1):
+    """
+    doing some slight perspective to the photo
+    :param img: the image we gave to the program with weighting
+    :param max_warp: max horizontal offset ratio, 0.1 = 10% of the photo width
+    :return:
+    """
+    img_np = np.array(img)
+    h, w = img_np.shape[:2]
+
+    # 控制左右偏移範圍
+    dx = int(w * random.uniform(0.03, max_warp))  # 偏移距離
+    dy = int(h * random.uniform(0.01, 0.05))
+
+    # 隨機選左偏或右偏（模擬不同攝影方向）
+    if random.random() < 0.5:
+        src_pts = np.float32([[0, 0], [w, 0], [w, h], [0, h]])
+        dst_pts = np.float32([[0 + dx, 0 + dy], [w - dx, 0], [w - dx, h], [0 + dx, h - dy]])
+    else:
+        src_pts = np.float32([[0, 0], [w, 0], [w, h], [0, h]])
+        dst_pts = np.float32([[0, 0], [w - dx, 0 + dy], [w - dx, h - dy], [0, h]])
+
+    M = cv2.getPerspectiveTransform(src_pts, dst_pts)
+    warped = cv2.warpPerspective(img_np, M, (w, h), borderMode=cv2.BORDER_REPLICATE)
+    return Image.fromarray(warped)
+
 def augment_image(img: Image.Image):
     # changing the angel of the aug to 3-7 degree (modeling shooting from the sides)
     if random.random() < 0.5:
-        img = random_perspective(img, max_shift=0.05)
+        img = apply_perspective_wrap(img,max_warp=0.12)
 
     # blurring or sharpening the photo
     if random.random() < 0.4:

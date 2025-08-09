@@ -6,66 +6,12 @@ import numpy as np
 import cv2
 import shutil
 
-# add the root
 SRC_ROOT = "dataset_more_none"
 DST_ROOT = "dataset_aug"
 AUG_PER_IMAGE = 2
 
-# might not be used
-def random_perspective(img, max_shift=0.05):
-    arr = np.array(img)
-    h, w = arr.shape[:2]
-
-    # the original 4 angels
-    src_pts = np.float32([[0, 0], [w, 0], [w, h], [0, h]])
-
-    # shifting the 4 angles (modelling different camera angels)]
-    shift_x = w * random.uniform(-max_shift, max_shift)
-    shift_y = h * random.uniform(-max_shift, max_shift)
-    dst_pts = np.float32([
-        [0 + shift_x, 0 + shift_y],
-        [w - shift_x, 0 + shift_y],
-        [w - shift_x, h - shift_y],
-        [0 + shift_x, h - shift_y]
-    ])
-
-    M = cv2.getPerspectiveTransform(src_pts, dst_pts)
-    arr_warped = cv2.warpPerspective(arr, M, (w, h), borderMode=cv2.BORDER_REPLICATE)
-    return Image.fromarray(arr_warped)
-
-# afine/perspective transformation
-def apply_perspective_wrap(img:Image.Image,max_warp=0.1):
-    """
-    doing some slight perspective to the photo
-    :param img: the image we gave to the program with weighting
-    :param max_warp: max horizontal offset ratio, 0.1 = 10% of the photo width
-    :return:
-    """
-    img_np = np.array(img)
-    h, w = img_np.shape[:2]
-
-    # 控制左右偏移範圍
-    dx = int(w * random.uniform(0.03, max_warp))  # 偏移距離
-    dy = int(h * random.uniform(0.01, 0.05))
-
-    # 隨機選左偏或右偏（模擬不同攝影方向）
-    if random.random() < 0.5:
-        src_pts = np.float32([[0, 0], [w, 0], [w, h], [0, h]])
-        dst_pts = np.float32([[0 + dx, 0 + dy], [w - dx, 0], [w - dx, h], [0 + dx, h - dy]])
-    else:
-        src_pts = np.float32([[0, 0], [w, 0], [w, h], [0, h]])
-        dst_pts = np.float32([[0, 0], [w - dx, 0 + dy], [w - dx, h - dy], [0, h]])
-
-    M = cv2.getPerspectiveTransform(src_pts, dst_pts)
-    warped = cv2.warpPerspective(img_np, M, (w, h), borderMode=cv2.BORDER_REPLICATE)
-    return Image.fromarray(warped)
-
 def augment_image(img: Image.Image):
-    # changing the angel of the aug to 3-7 degree (modeling shooting from the sides)
-    if random.random() < 0.5:
-        img = apply_perspective_wrap(img,max_warp=0.12)
-
-    # blurring or sharpening the photo
+    # blurring or sharpening
     if random.random() < 0.4:
         if random.random() < 0.5:
             img = img.filter(ImageFilter.GaussianBlur(radius=random.uniform(0.5,1.5)))
@@ -76,9 +22,9 @@ def augment_image(img: Image.Image):
     if random.random() < 0.7:
         img = ImageEnhance.Brightness(img).enhance(random.uniform(0.85, 1.15))
         img = ImageEnhance.Contrast(img).enhance(random.uniform(0.85, 1.2))
-        img = ImageEnhance.Color(img).enhance(random.uniform(0.7, 1.3))
+        img = ImageEnhance.Color(img).enhance(random.uniform(0.85, 1.2))
 
-    # Gamma shift
+    # 3. Gamma shift
     if random.random() < 0.4:
         gamma = random.uniform(0.9, 1.3)
         table = np.array([((i / 255.0) ** (1.0/gamma)) * 255 for i in range(256)]).astype("uint8")
@@ -100,6 +46,7 @@ def augment_image(img: Image.Image):
         img = Image.fromarray((arr*255).astype(np.uint8))
 
     return img
+
 
 def augment_dataset():
     # make dst
@@ -125,7 +72,7 @@ def augment_dataset():
             img = Image.open(src_path).convert("RGB")
             fname, ext = os.path.splitext(f)
 
-            # make augmented image
+            # make auged image
             for i in range(AUG_PER_IMAGE):
                 aug_img = augment_image(img.copy())
                 aug_name = f"{fname}_aug{i+1}{ext}"

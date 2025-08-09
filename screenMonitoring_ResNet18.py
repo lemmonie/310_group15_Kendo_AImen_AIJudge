@@ -116,23 +116,7 @@ with mss.mss() as sct:
         cv2.putText(resized_frame, f"{pred_label.upper()} ({pred_conf:.2f})",
                     (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
 
-        # if USE_VOTING_MODE:
-        #     if pred_label != "none":
-        #         sequence_preds.append(pred_label)
-        #     else:
-        #         if len(sequence_preds) > 0:
-        #             vote_result = Counter(sequence_preds).most_common(1)[0][0]
-        #             vote_count = Counter(sequence_preds)
-        #             print(f"Voting Result: {vote_result.upper()} {vote_count}")
-        #
-        #             text_lines = [
-        #                 f">>> HIT DETECTED: {vote_result.upper()} <<<",
-        #                 f"Votes: LEFT={vote_count.get('left',0)}, RIGHT={vote_count.get('right',0)}",
-        #             ]
-        #             resized_frame = add_bottom_bar(resized_frame, text_lines)
-        #
-        #             save_hit_frame(resized_frame, vote_result)
-        #             sequence_preds.clear()
+       
         if USE_VOTING_MODE:
             if pred_label != "none":
                 # if it is a first hit, record
